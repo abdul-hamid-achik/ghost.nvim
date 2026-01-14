@@ -1,42 +1,38 @@
 -- ghost.nvim/lua/ghost/cmp_source.lua
 -- nvim-cmp source integration for ghost.nvim
 
-local M = {}
+local source = {}
 
---- Create a new cmp source instance.
-function M.new()
-  return setmetatable({}, { __index = M })
+-- Store pending completions
+local pending = {
+  items = {},
+  ctx = nil,
+}
+
+function source.new()
+  return setmetatable({}, { __index = source })
 end
 
---- Get the source name.
-function M:get_keyword_pattern()
-  return [[\k\+]]
-end
-
---- Get debug name.
-function M:get_debug_name()
+function source:get_debug_name()
   return "ghost"
 end
 
---- Check if source is available.
-function M:is_available()
-  local ghost = require("ghost")
+function source:is_available()
+  local ok, ghost = pcall(require, "ghost")
+  if not ok then
+    return false
+  end
   return ghost.is_enabled() and ghost.is_filetype_enabled()
 end
 
---- Get trigger characters.
-function M:get_trigger_characters()
-  -- Trigger on common code characters
-  return { ".", ":", "(", "[", "{", " ", "\n" }
+function source:get_trigger_characters()
+  return { ".", ":", "(", " " }
 end
 
---- Complete request from cmp.
----@param params table cmp completion params
----@param callback function callback to call with completion items
-function M:complete(params, callback)
+function source:complete(params, callback)
   local ghost = require("ghost")
   if not ghost.is_enabled() then
-    callback({ items = {} })
+    callback({ items = {}, isIncomplete = false })
     return
   end
 
@@ -44,7 +40,6 @@ function M:complete(params, callback)
   local api = require("ghost.api")
   local completion = require("ghost.completion")
   local cache = require("ghost.cache")
-  local util = require("ghost.util")
 
   -- Build context
   local ctx = context_mod.build()
@@ -55,94 +50,92 @@ function M:complete(params, callback)
   if cached then
     local parsed = completion.parse_completion(cached, ctx)
     if parsed then
-      util.log("[cmp] Cache hit", vim.log.levels.DEBUG)
-      callback({ items = { M.make_item(parsed, ctx) } })
+      vim.notify("[ghost] cmp: cache hit", vim.log.levels.DEBUG)
+      local item = self:make_item(parsed, ctx)
+      callback({ items = { item }, isIncomplete = false })
       return
     end
   end
 
-  -- Build prompt
+  -- Return incomplete immediately, then fetch async
+  callback({ items = {}, isIncomplete = true })
+
+  -- Build prompt and make API request
   local prompt = completion.build_prompt(ctx)
 
-  util.log("[cmp] Requesting completion from API", vim.log.levels.DEBUG)
+  vim.notify("[ghost] cmp: requesting AI completion...", vim.log.levels.INFO)
 
-  -- Make streaming API request
   api.stream(prompt, {
     on_complete = function(final_text)
-      util.log("[cmp] API response complete", vim.log.levels.DEBUG)
+      vim.notify("[ghost] cmp: got response", vim.log.levels.INFO)
 
       -- Cache the result
       cache.set(cache_key, final_text)
 
-      -- Parse and return as cmp item
+      -- Parse and store
       local parsed = completion.parse_completion(final_text, ctx)
       if parsed then
-        callback({ items = { M.make_item(parsed, ctx) } })
-      else
-        callback({ items = {} })
+        pending.items = { self:make_item(parsed, ctx) }
+        pending.ctx = ctx
+
+        -- Trigger cmp refresh to show the new item
+        vim.schedule(function()
+          local cmp = require("cmp")
+          if cmp.visible() then
+            cmp.complete({ reason = cmp.ContextReason.Auto })
+          end
+        end)
       end
     end,
 
     on_error = function(err)
-      util.log("[cmp] API error: " .. tostring(err), vim.log.levels.WARN)
-      callback({ items = {} })
+      vim.notify("[ghost] cmp: API error - " .. tostring(err), vim.log.levels.WARN)
     end,
   })
 end
 
---- Convert ghost completion to cmp item.
----@param completion table Parsed completion from ghost
----@param ctx table Context
----@return table item cmp completion item
-function M.make_item(completion, ctx)
+function source:make_item(comp, ctx)
   local cmp = require("cmp")
 
   -- Get the text to insert
   local text
-  if completion.type == "insert" then
-    text = completion.text
+  if comp.type == "insert" then
+    text = comp.text
   else
-    -- For edits, use the insert part (cmp can't do deletions)
-    text = completion.insert or ""
+    text = comp.insert or ""
   end
 
-  -- Create preview label (first line, truncated)
+  -- Create label (first line, truncated)
   local first_line = (text or ""):match("^[^\n]*") or ""
-  local label = first_line:sub(1, 50)
-  if #first_line > 50 then
+  local label = first_line:sub(1, 60)
+  if #first_line > 60 then
     label = label .. "..."
   end
   if label == "" then
     label = "[AI completion]"
   end
 
-  -- Add indicator for edit vs insert
-  if completion.type == "edit" then
-    label = label .. " [edit]"
-  end
-
   return {
     label = label,
     insertText = text,
-    kind = cmp.lsp.CompletionItemKind.Snippet,
-    detail = "[ghost.nvim]",
+    kind = cmp.lsp.CompletionItemKind.Text,
+    detail = "[AI]",
+    sortText = "0000", -- Sort to top
     documentation = {
       kind = "markdown",
-      value = "```" .. (ctx.filetype or "") .. "\n" .. (text or "") .. "\n```",
+      value = "**ghost.nvim AI completion**\n\n```" .. (ctx.filetype or "") .. "\n" .. (text or "") .. "\n```",
     },
   }
 end
 
---- Register ghost as a cmp source.
----@return boolean success Whether registration succeeded
-function M.register()
+function source.register()
   local has_cmp, cmp = pcall(require, "cmp")
   if not has_cmp then
     return false
   end
 
-  cmp.register_source("ghost", M.new())
+  cmp.register_source("ghost", source.new())
   return true
 end
 
-return M
+return source
