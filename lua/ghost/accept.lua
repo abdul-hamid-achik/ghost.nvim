@@ -203,42 +203,50 @@ function M.setup_keymaps()
   local config = require("ghost").config
   local keymap = config.keymap
 
-  -- Accept full completion with Tab
-  vim.keymap.set("i", keymap.accept, function()
-    if render.has_completion() then
-      M.accept()
-      return ""
-    end
-    -- Fallback: return the key literally (for other plugins to handle)
-    return keymap.accept
-  end, { expr = true, silent = true, desc = "Accept ghost completion" })
+  -- Accept full completion with Tab (skip if empty - user handles it manually)
+  if keymap.accept and keymap.accept ~= "" then
+    vim.keymap.set("i", keymap.accept, function()
+      if render.has_completion() then
+        M.accept()
+        return ""
+      end
+      -- Fallback: return the key literally (for other plugins to handle)
+      return keymap.accept
+    end, { expr = true, silent = true, desc = "Accept ghost completion" })
+  end
 
-  -- Accept word with Ctrl+Right
-  vim.keymap.set("i", keymap.accept_word, function()
-    if render.has_completion() then
-      M.accept_word()
-    else
-      -- Fallback: normal word movement
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-Right>", true, false, true), "n", false)
-    end
-  end, { silent = true, desc = "Accept ghost word" })
+  -- Accept word with Ctrl+Right (skip if empty)
+  if keymap.accept_word and keymap.accept_word ~= "" then
+    vim.keymap.set("i", keymap.accept_word, function()
+      if render.has_completion() then
+        M.accept_word()
+      else
+        -- Fallback: normal word movement
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-Right>", true, false, true), "n", false)
+      end
+    end, { silent = true, desc = "Accept ghost word" })
+  end
 
-  -- Accept line with Ctrl+L
-  vim.keymap.set("i", keymap.accept_line, function()
-    if render.has_completion() then
-      M.accept_line()
-    else
-      -- Fallback: normal Ctrl+L behavior (redraw)
-      vim.cmd("redraw!")
-    end
-  end, { silent = true, desc = "Accept ghost line" })
+  -- Accept line with Ctrl+L (skip if empty)
+  if keymap.accept_line and keymap.accept_line ~= "" then
+    vim.keymap.set("i", keymap.accept_line, function()
+      if render.has_completion() then
+        M.accept_line()
+      else
+        -- Fallback: normal Ctrl+L behavior (redraw)
+        vim.cmd("redraw!")
+      end
+    end, { silent = true, desc = "Accept ghost line" })
+  end
 
-  -- Dismiss with Ctrl+]
-  vim.keymap.set("i", keymap.dismiss, function()
-    if render.has_completion() then
-      M.dismiss()
-    end
-  end, { silent = true, desc = "Dismiss ghost completion" })
+  -- Dismiss with Ctrl+] (skip if empty)
+  if keymap.dismiss and keymap.dismiss ~= "" then
+    vim.keymap.set("i", keymap.dismiss, function()
+      if render.has_completion() then
+        M.dismiss()
+      end
+    end, { silent = true, desc = "Dismiss ghost completion" })
+  end
 
   -- Also dismiss on Escape (but don't override normal Escape behavior)
   vim.keymap.set("i", "<Esc>", function()
@@ -250,13 +258,17 @@ function M.setup_keymaps()
   end, { expr = true, silent = true, desc = "Dismiss ghost and exit insert" })
 
   -- Cycle next/prev (TODO: implement multiple suggestions)
-  vim.keymap.set("i", keymap.next, function()
-    -- TODO: cycle to next suggestion
-  end, { silent = true, desc = "Next ghost suggestion" })
+  if keymap.next and keymap.next ~= "" then
+    vim.keymap.set("i", keymap.next, function()
+      -- TODO: cycle to next suggestion
+    end, { silent = true, desc = "Next ghost suggestion" })
+  end
 
-  vim.keymap.set("i", keymap.prev, function()
-    -- TODO: cycle to previous suggestion
-  end, { silent = true, desc = "Previous ghost suggestion" })
+  if keymap.prev and keymap.prev ~= "" then
+    vim.keymap.set("i", keymap.prev, function()
+      -- TODO: cycle to previous suggestion
+    end, { silent = true, desc = "Previous ghost suggestion" })
+  end
 end
 
 return M
