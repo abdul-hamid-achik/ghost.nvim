@@ -72,29 +72,35 @@ vim.api.nvim_create_user_command("GhostDebug", function()
   local completion = require("ghost.completion")
   local render = require("ghost.render")
 
-  local lines = {
-    "=== ghost.nvim Debug Info ===",
-    "",
-    "-- Status --",
-    vim.inspect(ghost.status()),
-    "",
-    "-- Config --",
-    "Model: " .. ghost.config.model,
-    "Debounce: " .. ghost.config.debounce_ms .. "ms",
-    "Idle trigger: " .. ghost.config.idle_trigger_ms .. "ms",
-    "",
-    "-- Cache --",
-    vim.inspect(cache.stats()),
-    "",
-    "-- Prediction --",
-    vim.inspect(prediction.stats()),
-    "",
-    "-- Completion State --",
-    vim.inspect(completion.get_state()),
-    "",
-    "-- Render State --",
-    vim.inspect(render.get_state()),
-  }
+  -- Helper to add multi-line inspect output
+  local lines = {}
+  local function add(text)
+    for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+      table.insert(lines, line)
+    end
+  end
+
+  add("=== ghost.nvim Debug Info ===")
+  add("")
+  add("-- Status --")
+  add(vim.inspect(ghost.status()))
+  add("")
+  add("-- Config --")
+  add("Model: " .. ghost.config.model)
+  add("Debounce: " .. ghost.config.debounce_ms .. "ms")
+  add("Idle trigger: " .. ghost.config.idle_trigger_ms .. "ms")
+  add("")
+  add("-- Cache --")
+  add(vim.inspect(cache.stats()))
+  add("")
+  add("-- Prediction --")
+  add(vim.inspect(prediction.stats()))
+  add("")
+  add("-- Completion State --")
+  add(vim.inspect(completion.get_state()))
+  add("")
+  add("-- Render State --")
+  add(vim.inspect(render.get_state()))
 
   -- Open in a scratch buffer
   local buf = vim.api.nvim_create_buf(false, true)
