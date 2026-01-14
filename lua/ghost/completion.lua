@@ -242,12 +242,12 @@ function M.parse_completion(text, ctx)
   local insert_match = text:match("<<<INSERT\n(.-)>>>")
 
   if delete_match or insert_match then
-    -- Remove trailing newlines from matches
+    -- Clean up matches: remove trailing newlines and cursor markers
     if delete_match then
-      delete_match = delete_match:gsub("\n$", "")
+      delete_match = delete_match:gsub("\n$", ""):gsub("<|CURSOR|>", "")
     end
     if insert_match then
-      insert_match = insert_match:gsub("\n$", "")
+      insert_match = insert_match:gsub("\n$", ""):gsub("<|CURSOR|>", "")
     end
 
     return {
