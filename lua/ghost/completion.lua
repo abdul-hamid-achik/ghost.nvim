@@ -228,6 +228,24 @@ RULES:
   }
 end
 
+--- Clean unwanted artifacts from completion text.
+---@param text string The text to clean
+---@return string cleaned The cleaned text
+local function clean_completion_text(text)
+  if not text then return "" end
+
+  local cleaned = text
+    -- Remove cursor markers
+    :gsub("<|CURSOR|>", "")
+    -- Remove markdown code fences (```lang at start, ``` at end)
+    :gsub("^```%w*\n?", "")
+    :gsub("\n?```%s*$", "")
+    -- Remove trailing newline
+    :gsub("\n$", "")
+
+  return cleaned
+end
+
 --- Parse completion text, detecting if it's INSERT or EDIT.
 ---@param text string The completion text
 ---@param ctx table The context
@@ -242,13 +260,9 @@ function M.parse_completion(text, ctx)
   local insert_match = text:match("<<<INSERT\n(.-)>>>")
 
   if delete_match or insert_match then
-    -- Clean up matches: remove trailing newlines and cursor markers
-    if delete_match then
-      delete_match = delete_match:gsub("\n$", ""):gsub("<|CURSOR|>", "")
-    end
-    if insert_match then
-      insert_match = insert_match:gsub("\n$", ""):gsub("<|CURSOR|>", "")
-    end
+    -- Clean up matches
+    delete_match = clean_completion_text(delete_match)
+    insert_match = clean_completion_text(insert_match)
 
     return {
       type = "edit",
@@ -259,9 +273,8 @@ function M.parse_completion(text, ctx)
   end
 
   -- Pure insert: clean up the text
-  local cleaned = text
-    :gsub("^%s*", "") -- Trim leading whitespace
-    :gsub("<|CURSOR|>", "") -- Remove any cursor markers
+  local cleaned = clean_completion_text(text)
+    :gsub("^%s*", "") -- Also trim leading whitespace for inserts
 
   if cleaned == "" then
     return nil
