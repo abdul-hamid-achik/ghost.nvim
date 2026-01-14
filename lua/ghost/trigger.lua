@@ -268,12 +268,76 @@ end
 
 --- Trigger completion immediately (bypass debounce).
 function M.trigger_now()
-  if M.should_skip() then
+  local ghost = require("ghost")
+
+  -- Always log when manually triggered
+  vim.notify("[ghost] trigger_now() called", vim.log.levels.INFO)
+
+  local skip, reason = M.should_skip_verbose()
+  if skip then
+    vim.notify("[ghost] Skipped: " .. reason, vim.log.levels.WARN)
     return
   end
 
+  vim.notify("[ghost] Requesting completion...", vim.log.levels.INFO)
   M.cancel()
   M.request_completion()
+end
+
+--- Check if we should skip triggering (verbose version).
+---@return boolean should_skip
+---@return string|nil reason
+function M.should_skip_verbose()
+  local ghost = require("ghost")
+
+  -- Plugin disabled
+  if not ghost.is_enabled() then
+    return true, "Plugin not enabled"
+  end
+
+  -- Not in insert mode
+  local mode = vim.fn.mode()
+  if mode ~= "i" and mode ~= "ic" and mode ~= "ix" then
+    return true, "Not in insert mode (mode=" .. mode .. ")"
+  end
+
+  -- Filetype disabled
+  if not ghost.is_filetype_enabled() then
+    return true, "Filetype disabled (" .. vim.bo.filetype .. ")"
+  end
+
+  -- Buffer too large
+  local lines = vim.api.nvim_buf_line_count(0)
+  local max_lines = ghost.config.limits and ghost.config.limits.max_buffer_lines or 10000
+  if lines > max_lines then
+    return true, "Buffer too large (" .. lines .. " > " .. max_lines .. ")"
+  end
+
+  -- Popup menu visible (built-in completion)
+  if vim.fn.pumvisible() == 1 then
+    return true, "Popup menu visible"
+  end
+
+  -- Recording macro
+  if vim.fn.reg_recording() ~= "" then
+    return true, "Recording macro"
+  end
+
+  -- Current line too short
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row = cursor[1]
+  local current_line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1] or ""
+  local min_chars = ghost.config.min_chars or 3
+  if #current_line < min_chars then
+    return true, "Line too short (" .. #current_line .. " < " .. min_chars .. ")"
+  end
+
+  -- Line is empty or whitespace only
+  if current_line:match("^%s*$") then
+    return true, "Line is empty/whitespace"
+  end
+
+  return false, nil
 end
 
 --- Cancel any pending request.

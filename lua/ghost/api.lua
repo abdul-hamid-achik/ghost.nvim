@@ -109,6 +109,9 @@ function M.stream(prompt_data, callbacks)
       if cancelled then
         return
       end
+      vim.schedule(function()
+        vim.notify("[ghost] API response complete (" .. #accumulated .. " chars)", vim.log.levels.INFO)
+      end)
       if callbacks.on_complete then
         vim.schedule(function()
           if not cancelled then
@@ -121,6 +124,9 @@ function M.stream(prompt_data, callbacks)
       if cancelled then
         return
       end
+      vim.schedule(function()
+        vim.notify("[ghost] API error: " .. tostring(err), vim.log.levels.ERROR)
+      end)
       if callbacks.on_error then
         vim.schedule(function()
           if not cancelled then
@@ -143,6 +149,9 @@ function M.stream(prompt_data, callbacks)
   })
 
   util.log("Making API request to Claude", vim.log.levels.DEBUG)
+  vim.schedule(function()
+    vim.notify("[ghost] API request started (model: " .. config.model .. ")", vim.log.levels.INFO)
+  end)
 
   -- Make streaming request
   job = curl.post("https://api.anthropic.com/v1/messages", {
@@ -158,6 +167,9 @@ function M.stream(prompt_data, callbacks)
       end
     end,
     on_error = function(err)
+      vim.schedule(function()
+        vim.notify("[ghost] HTTP error: " .. vim.inspect(err), vim.log.levels.ERROR)
+      end)
       if not cancelled and callbacks.on_error then
         vim.schedule(function()
           callbacks.on_error(err.message or "Request failed")
