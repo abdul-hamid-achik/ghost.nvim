@@ -130,18 +130,21 @@ function source:make_item(comp, ctx)
   local cmp = require("cmp")
   local text = comp.type == "insert" and comp.text or (comp.insert or "")
 
-  local label = (text:match("^[^\n]*") or ""):sub(1, 50)
-  if label == "" then label = "[AI completion]" end
+  local first_line = (text:match("^[^\n]*") or ""):sub(1, 40)
+  if first_line == "" then first_line = "..." end
+
+  -- Add clear AI prefix to make it obvious
+  local label = "🤖 " .. first_line
 
   return {
     label = label,
     insertText = text,
-    kind = cmp.lsp.CompletionItemKind.Text,
-    detail = "[AI]",
-    sortText = "0000", -- Sort to top
+    kind = cmp.lsp.CompletionItemKind.Snippet,
+    detail = "ghost.nvim AI",
+    sortText = "!0000", -- Sort to very top (! comes before alphanumeric)
     documentation = {
       kind = "markdown",
-      value = "```" .. (ctx.filetype or "") .. "\n" .. text .. "\n```",
+      value = "**AI Suggestion from ghost.nvim**\n\n```" .. (ctx.filetype or "") .. "\n" .. text .. "\n```",
     },
   }
 end
