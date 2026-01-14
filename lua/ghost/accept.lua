@@ -13,26 +13,31 @@ function M.accept()
     return false
   end
 
+  -- Clear display immediately (removes floating window and extmarks)
   render.clear()
 
-  if completion.type == "insert" then
-    M.insert_text(completion.text)
-  elseif completion.type == "edit" then
-    M.apply_edit(completion)
-  end
+  -- Schedule the actual edit to run after current input cycle
+  -- This prevents timing issues with floating window teardown
+  vim.schedule(function()
+    if completion.type == "insert" then
+      M.insert_text(completion.text)
+    elseif completion.type == "edit" then
+      M.apply_edit(completion)
+    end
 
-  -- Trigger next completion if configured
-  local config = require("ghost").config
-  if config.trigger.after_accept then
-    vim.defer_fn(function()
-      require("ghost.trigger").trigger_now()
-    end, 50)
-  end
+    -- Trigger next completion if configured
+    local config = require("ghost").config
+    if config.trigger.after_accept then
+      vim.defer_fn(function()
+        require("ghost.trigger").trigger_now()
+      end, 50)
+    end
 
-  -- Record edit for prediction
-  if config.prediction.enabled then
-    require("ghost.prediction").record_accept(completion)
-  end
+    -- Record edit for prediction
+    if config.prediction.enabled then
+      require("ghost.prediction").record_accept(completion)
+    end
+  end)
 
   return true
 end
