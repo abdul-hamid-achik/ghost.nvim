@@ -66,7 +66,7 @@ local function create_sse_parser(on_text, on_complete, on_error)
   end
 end
 
---- Make a streaming completion request to Claude.
+--- Make a streaming completion request to Claude using curl via jobstart.
 ---@param prompt_data table { system = string, user = string }
 ---@param callbacks table { on_chunk = function, on_complete = function, on_error = function }
 ---@return function cancel Function to cancel the request
@@ -74,21 +74,9 @@ function M.stream(prompt_data, callbacks)
   local config = require("ghost").config
   local util = require("ghost.util")
 
-  -- Load plenary.curl
-  local ok, curl = pcall(require, "plenary.curl")
-  if not ok then
-    vim.schedule(function()
-      vim.notify("[ghost.nvim] plenary.nvim is required. Install nvim-lua/plenary.nvim", vim.log.levels.ERROR)
-    end)
-    if callbacks.on_error then
-      callbacks.on_error("plenary.nvim not installed")
-    end
-    return function() end
-  end
-
   local accumulated = ""
   local cancelled = false
-  local job = nil
+  local job_id = nil
 
   -- Create SSE parser
   local parser = create_sse_parser(
@@ -149,40 +137,73 @@ function M.stream(prompt_data, callbacks)
   })
 
   util.log("Making API request to Claude", vim.log.levels.DEBUG)
-  vim.schedule(function()
-    vim.notify("[ghost] API request started (model: " .. config.model .. ")", vim.log.levels.INFO)
-  end)
+  vim.notify("[ghost] API request started (model: " .. config.model .. ")", vim.log.levels.INFO)
 
-  -- Make streaming request
-  job = curl.post("https://api.anthropic.com/v1/messages", {
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["x-api-key"] = config.api_key,
-      ["anthropic-version"] = "2023-06-01",
-    },
-    body = body,
-    stream = function(_, chunk)
-      if not cancelled then
-        parser(chunk)
+  -- Build curl command
+  local curl_cmd = {
+    "curl",
+    "-s",
+    "-X", "POST",
+    "https://api.anthropic.com/v1/messages",
+    "-H", "Content-Type: application/json",
+    "-H", "x-api-key: " .. config.api_key,
+    "-H", "anthropic-version: 2023-06-01",
+    "-d", body,
+  }
+
+  -- Use jobstart for streaming
+  job_id = vim.fn.jobstart(curl_cmd, {
+    on_stdout = function(_, data, _)
+      if cancelled then
+        return
+      end
+      for _, line in ipairs(data) do
+        if line ~= "" then
+          parser(line .. "\n")
+        end
       end
     end,
-    on_error = function(err)
-      vim.schedule(function()
-        vim.notify("[ghost] HTTP error: " .. vim.inspect(err), vim.log.levels.ERROR)
-      end)
-      if not cancelled and callbacks.on_error then
+    on_stderr = function(_, data, _)
+      if cancelled then
+        return
+      end
+      local stderr = table.concat(data, "\n")
+      if stderr ~= "" then
         vim.schedule(function()
-          callbacks.on_error(err.message or "Request failed")
+          vim.notify("[ghost] curl stderr: " .. stderr, vim.log.levels.WARN)
         end)
       end
     end,
+    on_exit = function(_, exit_code, _)
+      if cancelled then
+        return
+      end
+      if exit_code ~= 0 then
+        vim.schedule(function()
+          vim.notify("[ghost] curl exited with code: " .. exit_code, vim.log.levels.ERROR)
+          if callbacks.on_error then
+            callbacks.on_error("curl failed with exit code " .. exit_code)
+          end
+        end)
+      end
+    end,
+    stdout_buffered = false,
+    stderr_buffered = true,
   })
+
+  if job_id <= 0 then
+    vim.notify("[ghost] Failed to start curl job", vim.log.levels.ERROR)
+    if callbacks.on_error then
+      callbacks.on_error("Failed to start curl")
+    end
+    return function() end
+  end
 
   -- Return cancel function
   return function()
     cancelled = true
-    if job and job.shutdown then
-      pcall(job.shutdown, job)
+    if job_id and job_id > 0 then
+      pcall(vim.fn.jobstop, job_id)
     end
   end
 end
@@ -193,12 +214,6 @@ end
 function M.complete(prompt_data, callback)
   local config = require("ghost").config
 
-  local ok, curl = pcall(require, "plenary.curl")
-  if not ok then
-    callback(nil, "plenary.nvim not installed")
-    return
-  end
-
   local body = vim.json.encode({
     model = config.model,
     max_tokens = config.max_tokens,
@@ -208,33 +223,53 @@ function M.complete(prompt_data, callback)
     },
   })
 
-  curl.post("https://api.anthropic.com/v1/messages", {
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["x-api-key"] = config.api_key,
-      ["anthropic-version"] = "2023-06-01",
-    },
-    body = body,
-    callback = function(response)
-      vim.schedule(function()
-        if response.status ~= 200 then
-          callback(nil, "API error: " .. response.status)
-          return
-        end
+  local curl_cmd = {
+    "curl",
+    "-s",
+    "-X", "POST",
+    "https://api.anthropic.com/v1/messages",
+    "-H", "Content-Type: application/json",
+    "-H", "x-api-key: " .. config.api_key,
+    "-H", "anthropic-version: 2023-06-01",
+    "-d", body,
+  }
 
-        local decode_ok, data = pcall(vim.json.decode, response.body)
-        if not decode_ok then
+  vim.fn.jobstart(curl_cmd, {
+    on_stdout = function(_, data, _)
+      local response = table.concat(data, "\n")
+      if response == "" then
+        return
+      end
+
+      vim.schedule(function()
+        local ok, parsed = pcall(vim.json.decode, response)
+        if not ok then
           callback(nil, "Failed to parse response")
           return
         end
 
-        if data.content and data.content[1] and data.content[1].text then
-          callback(data.content[1].text, nil)
+        if parsed.error then
+          callback(nil, parsed.error.message or "API error")
+          return
+        end
+
+        if parsed.content and parsed.content[1] and parsed.content[1].text then
+          callback(parsed.content[1].text, nil)
         else
           callback(nil, "No content in response")
         end
       end)
     end,
+    on_stderr = function(_, data, _)
+      local stderr = table.concat(data, "\n")
+      if stderr ~= "" then
+        vim.schedule(function()
+          callback(nil, stderr)
+        end)
+      end
+    end,
+    stdout_buffered = true,
+    stderr_buffered = true,
   })
 end
 
