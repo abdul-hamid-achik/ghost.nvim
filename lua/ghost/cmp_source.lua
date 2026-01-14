@@ -42,15 +42,14 @@ function source:complete(params, callback)
   local ctx = context_mod.build()
   local ctx_hash = hash_ctx(ctx)
 
-  -- Return cached items if context hasn't changed
-  if state.cached_items and state.cached_ctx_hash == ctx_hash then
+  -- Return cached items if available (don't require exact context match)
+  -- AI completions are still useful even if cursor moved slightly
+  if state.cached_items and #state.cached_items > 0 then
     callback({ items = state.cached_items, isIncomplete = false })
+    -- Clear cache after returning so we fetch fresh on next change
+    state.cached_items = nil
     return
   end
-
-  -- Clear cache for new context
-  state.cached_items = nil
-  state.cached_ctx_hash = ctx_hash
 
   -- Cancel pending timer
   if state.timer then
@@ -115,13 +114,19 @@ end
 function source:deliver_result(parsed, ctx, ctx_hash)
   local item = self:make_item(parsed, ctx)
 
-  -- Cache for future calls at same position
+  -- Cache globally - show result even if cursor moved slightly
+  -- (AI completions are still useful even if not perfectly aligned)
   state.cached_items = { item }
-  state.cached_ctx_hash = ctx_hash
+  state.cached_ctx_hash = nil  -- Don't require exact match
 
   -- Trigger cmp to refresh and show our item
   vim.schedule(function()
     local cmp = require("cmp")
+    -- Force refresh the completion menu
+    if cmp.visible() then
+      -- Menu already open - close and reopen to include our item
+      cmp.close()
+    end
     cmp.complete({ reason = cmp.ContextReason.Auto })
   end)
 end
