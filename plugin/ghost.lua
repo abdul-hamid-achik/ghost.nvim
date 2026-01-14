@@ -118,3 +118,8 @@ vim.api.nvim_create_user_command("GhostTrigger", function()
   end
   require("ghost.trigger").trigger_now()
 end, { desc = "Manually trigger ghost completion" })
+
+-- :GhostDebugToggle - Toggle debug logging at runtime
+vim.api.nvim_create_user_command("GhostDebugToggle", function()
+  load_ghost().set_debug()
+end, { desc = "Toggle ghost.nvim debug logging" })

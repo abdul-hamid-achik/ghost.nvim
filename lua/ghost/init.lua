@@ -91,6 +91,21 @@ M.defaults = {
     max_pattern_edits = 10, -- Max locations to suggest
   },
 
+  -- Cache settings
+  cache = {
+    max_size = 50, -- Maximum cached entries
+    ttl_seconds = 300, -- Time-to-live in seconds (5 minutes, 0 = no expiry)
+  },
+
+  -- Limits (extracted magic numbers)
+  limits = {
+    max_buffer_lines = 10000, -- Skip buffers larger than this
+    edit_search_radius = 20, -- Lines to search for edit targets
+    max_lsp_symbols = 20, -- Max LSP symbols to include in context
+    max_symbol_depth = 2, -- Max nesting depth for LSP symbols
+    max_diagnostics = 5, -- Max diagnostics to include in context
+  },
+
   -- Debug
   debug = false,
 }
@@ -121,6 +136,13 @@ function M.setup(opts)
 
   -- Setup highlight groups
   M.setup_highlights()
+
+  -- Initialize cache settings
+  local cache = require("ghost.cache")
+  if M.config.cache then
+    cache.set_max_size(M.config.cache.max_size or 50)
+    cache.set_ttl(M.config.cache.ttl_seconds or 300)
+  end
 
   -- Initialize modules
   require("ghost.render").setup()
@@ -216,6 +238,21 @@ function M.status()
     model = M.config.model,
     api_key_set = M.config.api_key ~= nil,
   }
+end
+
+--- Toggle debug mode at runtime.
+---@param enabled? boolean If nil, toggles current state
+function M.set_debug(enabled)
+  if not M.initialized then
+    vim.notify("[ghost.nvim] Not initialized", vim.log.levels.WARN)
+    return
+  end
+  if enabled == nil then
+    M.config.debug = not M.config.debug
+  else
+    M.config.debug = enabled
+  end
+  vim.notify("[ghost.nvim] Debug mode: " .. (M.config.debug and "ON" or "OFF"))
 end
 
 return M

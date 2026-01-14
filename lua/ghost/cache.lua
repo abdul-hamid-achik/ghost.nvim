@@ -7,6 +7,7 @@ local M = {}
 local cache = {} -- key -> { value, timestamp }
 local order = {} -- Array of keys, most recent at end
 local max_size = 50
+local ttl = 300 -- Time-to-live in seconds (0 = no expiry)
 
 --- Generate a cache key from context.
 ---@param ctx table Context from context.build()
@@ -29,6 +30,21 @@ end
 function M.get(key)
   local entry = cache[key]
   if entry then
+    -- Check TTL expiration
+    if ttl > 0 then
+      local age = os.time() - entry.timestamp
+      if age > ttl then
+        -- Entry expired, remove it
+        cache[key] = nil
+        for i, k in ipairs(order) do
+          if k == key then
+            table.remove(order, i)
+            break
+          end
+        end
+        return nil
+      end
+    end
     -- Move to end of order (most recently used)
     M.touch(key)
     return entry.value
@@ -77,7 +93,7 @@ function M.clear()
 end
 
 --- Get cache statistics.
----@return table stats { size, max_size, oldest_age, newest_age }
+---@return table stats { size, max_size, ttl, oldest_age, newest_age }
 function M.stats()
   local now = os.time()
   local oldest_age = 0
@@ -92,6 +108,7 @@ function M.stats()
   return {
     size = #order,
     max_size = max_size,
+    ttl = ttl,
     oldest_age = oldest_age,
     newest_age = newest_age ~= math.huge and newest_age or 0,
   }
@@ -133,6 +150,18 @@ function M.set_max_size(size)
     local oldest_key = table.remove(order, 1)
     cache[oldest_key] = nil
   end
+end
+
+--- Set the TTL (time-to-live) for cache entries.
+---@param seconds number TTL in seconds (0 = no expiry)
+function M.set_ttl(seconds)
+  ttl = seconds or 300
+end
+
+--- Get the current TTL setting.
+---@return number ttl TTL in seconds
+function M.get_ttl()
+  return ttl
 end
 
 --- Get current cache size.

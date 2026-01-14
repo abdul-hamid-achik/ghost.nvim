@@ -129,14 +129,17 @@ function M.insert_text(text)
     return
   end
 
+  local bufnr = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local start_row = cursor[1]
+  local start_col = cursor[2]
+
   local lines = vim.split(text, "\n", { plain = true })
 
   if #lines == 1 then
     -- Single line: simple insert
-    local bufnr = vim.api.nvim_get_current_buf()
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local row = cursor[1] - 1
-    local col = cursor[2]
+    local row = start_row - 1
+    local col = start_col
 
     local current_line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
     local before = current_line:sub(1, col)
@@ -147,10 +150,8 @@ function M.insert_text(text)
     vim.api.nvim_win_set_cursor(0, { row + 1, col + #text })
   else
     -- Multi-line: more complex insertion
-    local bufnr = vim.api.nvim_get_current_buf()
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local row = cursor[1] - 1
-    local col = cursor[2]
+    local row = start_row - 1
+    local col = start_col
 
     local current_line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
     local before = current_line:sub(1, col)
@@ -167,11 +168,46 @@ function M.insert_text(text)
     local final_col = #lines[#lines] - #after
     vim.api.nvim_win_set_cursor(0, { final_row, final_col })
   end
+
+  -- Record edit for prediction
+  local config = require("ghost").config
+  if config.prediction and config.prediction.enabled then
+    require("ghost.prediction").record_edit(
+      { row = start_row, col = start_col },
+      { before = "", after = text }
+    )
+  end
+end
+
+--- Find exact multi-line match in buffer lines.
+---@param lines table Buffer lines (1-indexed conceptually, but table is 0-indexed)
+---@param delete_lines table Lines to find
+---@param start_search number Start row (1-indexed)
+---@param end_search number End row (1-indexed)
+---@return number|nil match_row 1-indexed row where match starts, or nil
+local function find_exact_match(lines, delete_lines, start_search, end_search)
+  for i = start_search, end_search do
+    -- Check if all delete lines match starting at this position
+    local all_match = true
+    for j, delete_line in ipairs(delete_lines) do
+      local buffer_line = lines[i + j - 1]
+      if buffer_line == nil or buffer_line ~= delete_line then
+        all_match = false
+        break
+      end
+    end
+    if all_match then
+      return i
+    end
+  end
+  return nil
 end
 
 --- Apply an edit (delete + insert).
 ---@param completion table { delete = string, insert = string }
 function M.apply_edit(completion)
+  local config = require("ghost").config
+  local util = require("ghost.util")
   local bufnr = vim.api.nvim_get_current_buf()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local row = cursor[1]
@@ -180,14 +216,54 @@ function M.apply_edit(completion)
   if completion.delete and completion.delete ~= "" then
     local delete_lines = vim.split(completion.delete, "\n", { plain = true })
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local total_lines = #lines
 
-    -- Find and delete matching lines (simple approach: search nearby)
-    for i = math.max(1, row - 10), math.min(#lines, row + 10) do
-      if lines[i] and lines[i]:find(delete_lines[1], 1, true) then
-        -- Found potential match, delete the lines
-        local end_row = math.min(i + #delete_lines - 1, #lines)
-        vim.api.nvim_buf_set_lines(bufnr, i - 1, end_row, false, {})
-        break
+    -- Configurable search radius
+    local search_radius = (config.limits and config.limits.edit_search_radius) or 20
+    local start_search = math.max(1, row - search_radius)
+    local end_search = math.min(total_lines - #delete_lines + 1, row + search_radius)
+
+    -- Try exact multi-line match first
+    local match_row = find_exact_match(lines, delete_lines, start_search, end_search)
+
+    if match_row then
+      -- Found exact match, delete the lines
+      vim.api.nvim_buf_set_lines(bufnr, match_row - 1, match_row - 1 + #delete_lines, false, {})
+    else
+      -- Fallback: fuzzy match on trimmed first line (for indentation differences)
+      local first_line_trimmed = delete_lines[1]:match("^%s*(.-)%s*$")
+      local found = false
+
+      for i = start_search, end_search do
+        local line_trimmed = (lines[i] or ""):match("^%s*(.-)%s*$")
+        if line_trimmed == first_line_trimmed then
+          if #delete_lines == 1 then
+            -- Single line with whitespace tolerance
+            vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, {})
+            found = true
+            break
+          else
+            -- Multi-line: check if rest matches with whitespace tolerance
+            local all_match = true
+            for j = 2, #delete_lines do
+              local buf_trimmed = (lines[i + j - 1] or ""):match("^%s*(.-)%s*$")
+              local del_trimmed = delete_lines[j]:match("^%s*(.-)%s*$")
+              if buf_trimmed ~= del_trimmed then
+                all_match = false
+                break
+              end
+            end
+            if all_match then
+              vim.api.nvim_buf_set_lines(bufnr, i - 1, i - 1 + #delete_lines, false, {})
+              found = true
+              break
+            end
+          end
+        end
+      end
+
+      if not found then
+        util.log("Edit mode: Could not find exact match for deletion, skipping delete", vim.log.levels.WARN)
       end
     end
   end
@@ -195,6 +271,14 @@ function M.apply_edit(completion)
   -- Handle insertion
   if completion.insert and completion.insert ~= "" then
     M.insert_text(completion.insert)
+  end
+
+  -- Record edit for prediction (insert_text already records its own, so only record delete here)
+  if config.prediction and config.prediction.enabled and completion.delete and completion.delete ~= "" then
+    require("ghost.prediction").record_edit(
+      { row = row, col = 0 },
+      { before = completion.delete, after = "" }
+    )
   end
 end
 

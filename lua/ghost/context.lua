@@ -3,6 +3,14 @@
 
 local M = {}
 
+-- Symbol cache for non-blocking LSP symbol fetching
+local symbol_cache = {
+  bufnr = nil,
+  symbols = {},
+  timestamp = 0,
+  max_age_ms = 5000, -- 5 second cache
+}
+
 --- Build context for the current cursor position.
 ---@return table context
 function M.build()
@@ -104,6 +112,10 @@ end
 ---@param row number 1-indexed row
 ---@return table diagnostics
 function M.get_diagnostics(bufnr, row)
+  local config = require("ghost").config
+  local limits = config.limits or {}
+  local max_diagnostics = limits.max_diagnostics or 5
+
   local diagnostics = {}
   local all_diags = vim.diagnostic.get(bufnr)
 
@@ -125,9 +137,9 @@ function M.get_diagnostics(bufnr, row)
     return math.abs(a.lnum - (row - 1)) < math.abs(b.lnum - (row - 1))
   end)
 
-  -- Limit to 5 most relevant
-  if #diagnostics > 5 then
-    diagnostics = vim.list_slice(diagnostics, 1, 5)
+  -- Limit to most relevant
+  if #diagnostics > max_diagnostics then
+    diagnostics = vim.list_slice(diagnostics, 1, max_diagnostics)
   end
 
   return diagnostics
@@ -212,10 +224,79 @@ function M.get_treesitter_scope(bufnr, row, col)
   return nil
 end
 
---- Get LSP document symbols.
+--- Get cached symbols or empty if cache is stale/invalid.
+---@param bufnr number Buffer number
+---@return table symbols
+local function get_cached_symbols(bufnr)
+  local now = vim.uv.now()
+  local age = now - symbol_cache.timestamp
+  if symbol_cache.bufnr == bufnr and age < symbol_cache.max_age_ms then
+    return symbol_cache.symbols
+  end
+  return {}
+end
+
+--- Get LSP document symbols (non-blocking, returns cached symbols).
 ---@param bufnr number Buffer number
 ---@return table symbols
 function M.get_lsp_symbols(bufnr)
+  -- Return cached symbols if available (non-blocking)
+  local cached = get_cached_symbols(bufnr)
+  if #cached > 0 then
+    return cached
+  end
+
+  -- If no cache, try to trigger a prefetch and return empty for now
+  -- The next completion request will have symbols available
+  M.prefetch_symbols(bufnr)
+  return {}
+end
+
+--- Prefetch LSP symbols asynchronously and cache them.
+---@param bufnr number Buffer number
+function M.prefetch_symbols(bufnr)
+  -- Don't prefetch if cache is fresh
+  local now = vim.uv.now()
+  if symbol_cache.bufnr == bufnr and (now - symbol_cache.timestamp) < symbol_cache.max_age_ms then
+    return
+  end
+
+  -- Get attached LSP clients
+  local clients = vim.lsp.get_clients({ bufnr = bufnr })
+  if #clients == 0 then
+    return
+  end
+
+  -- Find a client that supports document symbols
+  for _, client in ipairs(clients) do
+    if client.server_capabilities.documentSymbolProvider then
+      local params = { textDocument = vim.lsp.util.make_text_document_params(bufnr) }
+
+      -- Asynchronous request (non-blocking)
+      client.request("textDocument/documentSymbol", params, function(err, result)
+        if err or not result then
+          return
+        end
+
+        -- Flatten symbols and cache them
+        local symbols = {}
+        M.flatten_symbols(result, symbols, 0)
+
+        symbol_cache.bufnr = bufnr
+        symbol_cache.symbols = symbols
+        symbol_cache.timestamp = vim.uv.now()
+      end, bufnr)
+
+      break -- Only need one client
+    end
+  end
+end
+
+--- Get LSP document symbols synchronously (fallback, blocks).
+--- Use this only when you absolutely need symbols immediately.
+---@param bufnr number Buffer number
+---@return table symbols
+function M.get_lsp_symbols_sync(bufnr)
   local symbols = {}
 
   -- Get attached LSP clients
@@ -248,8 +329,10 @@ end
 ---@param result table Output list
 ---@param depth number Current nesting depth
 function M.flatten_symbols(lsp_symbols, result, depth)
-  local max_depth = 2 -- Don't go too deep
-  local max_symbols = 20 -- Limit total symbols
+  local config = require("ghost").config
+  local limits = config.limits or {}
+  local max_depth = limits.max_symbol_depth or 2
+  local max_symbols = limits.max_lsp_symbols or 20
 
   for _, sym in ipairs(lsp_symbols) do
     if #result >= max_symbols then

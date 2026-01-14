@@ -91,6 +91,17 @@ function M.enable()
       end
     end,
   })
+
+  -- Prefetch LSP symbols on buffer enter and text changes (non-blocking)
+  if config.context.include_lsp_symbols then
+    vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged" }, {
+      group = state.augroup,
+      callback = function()
+        local bufnr = vim.api.nvim_get_current_buf()
+        require("ghost.context").prefetch_symbols(bufnr)
+      end,
+    })
+  end
 end
 
 --- Disable trigger autocmds.
@@ -170,7 +181,8 @@ function M.should_skip()
 
   -- Buffer too large
   local lines = vim.api.nvim_buf_line_count(0)
-  if lines > 10000 then
+  local max_lines = ghost.config.limits and ghost.config.limits.max_buffer_lines or 10000
+  if lines > max_lines then
     return true
   end
 
