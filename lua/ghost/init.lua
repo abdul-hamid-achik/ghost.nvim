@@ -171,16 +171,10 @@ function M.setup(opts)
   -- Initialize modules
   require("ghost.render").setup()
 
-  -- Only setup standalone triggers if not using cmp
-  if not M.use_cmp then
-    require("ghost.trigger").setup()
-  else
-    -- Still setup trigger module but don't enable auto-triggers
-    -- This allows manual :GhostTrigger to still work
-    local trigger = require("ghost.trigger")
-    trigger.setup()
-    trigger.disable()  -- Disable auto-triggers when using cmp
-  end
+  -- Setup triggers - they work alongside cmp integration
+  -- When cmp is visible, trigger skips (via cmp.visible() check in should_skip)
+  -- When cmp is NOT visible, trigger shows inline ghost text
+  require("ghost.trigger").setup()
 
   require("ghost.accept").setup_keymaps()
 
