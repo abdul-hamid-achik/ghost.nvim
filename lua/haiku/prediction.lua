@@ -63,14 +63,20 @@ function M.predict_next()
   -- This suggests a repetitive replacement task
   if last.after and prev.after and last.after == prev.after then
     -- Find next occurrence of the pattern we're replacing
-    local bufnr = vim.api.nvim_get_current_buf()
-    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    -- Guard against empty string which matches everything
+    if last.before and #last.before > 0 then
+      local bufnr = vim.api.nvim_get_current_buf()
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-    for i = last.row + 1, #lines do
-      local line = lines[i]
-      if last.before and line:find(last.before, 1, true) then
-        local col = line:find(last.before, 1, true)
-        return { row = i, col = col }
+        for i = last.row + 1, #lines do
+          local line = lines[i]
+          local col = line:find(last.before, 1, true)
+          -- Validate col is within line bounds
+          if col and col <= #line then
+            return { row = i, col = col }
+          end
+        end
       end
     end
   end
@@ -146,18 +152,21 @@ end
 --- Jump to the predicted next edit location.
 function M.jump_to_next()
   local config = require("haiku").config
-  if not config.prediction.enabled then
+  -- Add nil checks for nested config access
+  if not config or not config.prediction or not config.prediction.enabled then
     return
   end
 
   local next_loc = M.predict_next()
   if next_loc then
-    vim.api.nvim_win_set_cursor(0, { next_loc.row, next_loc.col - 1 })
-
-    -- Trigger completion at new location
-    vim.defer_fn(function()
-      require("haiku.trigger").trigger_now()
-    end, 100)
+    -- Validate cursor position before setting
+    local ok = pcall(vim.api.nvim_win_set_cursor, 0, { next_loc.row, next_loc.col - 1 })
+    if ok then
+      -- Trigger completion at new location
+      vim.defer_fn(function()
+        require("haiku.trigger").trigger_now()
+      end, 100)
+    end
   end
 end
 

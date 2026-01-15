@@ -27,8 +27,13 @@ local state = {
 function M.setup()
   -- Create autocommand to clear on buffer change
   vim.api.nvim_create_autocmd({ "BufLeave", "BufDelete" }, {
-    callback = function()
-      M.clear()
+    callback = function(args)
+      -- Capture the buffer number from the event, not from state
+      -- This prevents issues where state.bufnr might have changed
+      local event_bufnr = args.buf
+      if state.bufnr and state.bufnr == event_bufnr then
+        M.clear()
+      end
     end,
   })
 end
@@ -374,9 +379,18 @@ function M.update_text(new_text)
   if state.completion.type == "insert" then
     state.completion.text = new_text
     -- Re-render at the updated position
-    local cursor = vim.api.nvim_win_get_cursor(0)
+    local ok, cursor = pcall(vim.api.nvim_win_get_cursor, 0)
+    if not ok then
+      M.clear()
+      return
+    end
+    local bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      M.clear()
+      return
+    end
     M.clear()
-    M.show_insert(new_text, vim.api.nvim_get_current_buf(), cursor[1] - 1, cursor[2])
+    M.show_insert(new_text, bufnr, cursor[1] - 1, cursor[2])
     state.completion = { type = "insert", text = new_text }
   end
 end

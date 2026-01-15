@@ -13,6 +13,10 @@ function M.accept()
     return false
   end
 
+  -- Cancel any in-flight request before accepting to prevent stale completions
+  -- from being rendered after we clear and insert
+  require("haiku.trigger").cancel()
+
   -- Clear display immediately (removes floating window and extmarks)
   render.clear()
 
@@ -135,7 +139,14 @@ function M.insert_text(text)
   end
 
   local bufnr = vim.api.nvim_get_current_buf()
-  local cursor = vim.api.nvim_win_get_cursor(0)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  local ok, cursor = pcall(vim.api.nvim_win_get_cursor, 0)
+  if not ok then
+    return
+  end
   local start_row = cursor[1]
   local start_col = cursor[2]
 

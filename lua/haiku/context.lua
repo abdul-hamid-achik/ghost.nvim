@@ -16,6 +16,12 @@ local symbol_cache = {
 function M.build()
   local config = require("haiku").config
   local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Validate buffer before accessing vim.bo
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return { bufnr = bufnr, row = 1, col = 0, before_cursor = "", after_cursor = "", filetype = "" }
+  end
+
   local cursor = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor[1], cursor[2]
 
@@ -24,7 +30,7 @@ function M.build()
     bufnr = bufnr,
     filename = vim.fn.expand("%:t"),
     filepath = vim.fn.expand("%:p"),
-    filetype = vim.bo[bufnr].filetype,
+    filetype = vim.bo[bufnr].filetype or "",
 
     -- Cursor position (1-indexed row, 0-indexed col)
     row = row,
@@ -157,9 +163,9 @@ function M.get_treesitter_scope(bufnr, row, col)
     return nil
   end
 
-  -- Get the tree
-  local trees = parser:parse()
-  if not trees or #trees == 0 then
+  -- Get the tree - wrap in pcall as parse() can fail if grammar is missing/broken
+  local parse_ok, trees = pcall(function() return parser:parse() end)
+  if not parse_ok or not trees or #trees == 0 then
     return nil
   end
 
@@ -269,7 +275,8 @@ function M.prefetch_symbols(bufnr)
 
   -- Find a client that supports document symbols
   for _, client in ipairs(clients) do
-    if client.server_capabilities.documentSymbolProvider then
+    -- Check server_capabilities exists (can be nil for disconnected clients)
+    if client.server_capabilities and client.server_capabilities.documentSymbolProvider then
       local params = { textDocument = vim.lsp.util.make_text_document_params(bufnr) }
 
       -- Asynchronous request (non-blocking)
@@ -307,7 +314,8 @@ function M.get_lsp_symbols_sync(bufnr)
 
   -- Find a client that supports document symbols
   for _, client in ipairs(clients) do
-    if client.server_capabilities.documentSymbolProvider then
+    -- Check server_capabilities exists (can be nil for disconnected clients)
+    if client.server_capabilities and client.server_capabilities.documentSymbolProvider then
       local params = { textDocument = vim.lsp.util.make_text_document_params(bufnr) }
 
       -- Synchronous request (with timeout)
@@ -403,6 +411,10 @@ function M.get_other_buffers_context(current_bufnr, current_filetype)
     if not vim.api.nvim_buf_is_loaded(bufnr) then
       goto continue
     end
+    -- Validate buffer before accessing vim.bo
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      goto continue
+    end
     if not vim.bo[bufnr].buflisted then
       goto continue
     end
@@ -410,7 +422,7 @@ function M.get_other_buffers_context(current_bufnr, current_filetype)
       goto continue
     end
 
-    local ft = vim.bo[bufnr].filetype
+    local ft = vim.bo[bufnr].filetype or ""
     local filepath = vim.api.nvim_buf_get_name(bufnr)
 
     -- Skip buffers without a file path

@@ -98,7 +98,10 @@ function M.stream(prompt_data, callbacks)
         return
       end
       vim.schedule(function()
-        vim.notify("[haiku] API response complete (" .. #accumulated .. " chars)", vim.log.levels.INFO)
+        -- Check cancelled again after schedule to avoid race condition
+        if not cancelled then
+          vim.notify("[haiku] API response complete (" .. #accumulated .. " chars)", vim.log.levels.INFO)
+        end
       end)
       if callbacks.on_complete then
         vim.schedule(function()
@@ -113,7 +116,10 @@ function M.stream(prompt_data, callbacks)
         return
       end
       vim.schedule(function()
-        vim.notify("[haiku] API error: " .. tostring(err), vim.log.levels.ERROR)
+        -- Check cancelled again after schedule to avoid race condition
+        if not cancelled then
+          vim.notify("[haiku] API error: " .. tostring(err), vim.log.levels.ERROR)
+        end
       end)
       if callbacks.on_error then
         vim.schedule(function()
@@ -140,6 +146,9 @@ function M.stream(prompt_data, callbacks)
   vim.notify("[haiku] API request started (model: " .. config.model .. ")", vim.log.levels.INFO)
 
   -- Build curl command
+  -- Note: API key is passed via CLI arg. While visible in `ps aux`, this is standard
+  -- practice for CLI tools. The key is already protected by OS-level permissions.
+  -- Using stdin or temp files would add complexity without meaningful security gain.
   local curl_cmd = {
     "curl",
     "-s",

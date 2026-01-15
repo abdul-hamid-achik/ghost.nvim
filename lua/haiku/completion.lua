@@ -246,6 +246,36 @@ local function clean_completion_text(text)
   return cleaned
 end
 
+--- Parse EDIT markers using line-based approach for robustness.
+--- Handles edge cases like `>>>>` in content better than regex.
+---@param text string The text to parse
+---@return string|nil delete_content, string|nil insert_content
+local function parse_edit_markers(text)
+  local lines = vim.split(text, "\n", { plain = true })
+  local delete_lines = {}
+  local insert_lines = {}
+  local current_section = nil  -- nil, "delete", or "insert"
+
+  for _, line in ipairs(lines) do
+    if line == "<<<DELETE" then
+      current_section = "delete"
+    elseif line == "<<<INSERT" then
+      current_section = "insert"
+    elseif line == ">>>" then
+      current_section = nil
+    elseif current_section == "delete" then
+      table.insert(delete_lines, line)
+    elseif current_section == "insert" then
+      table.insert(insert_lines, line)
+    end
+  end
+
+  local delete_content = #delete_lines > 0 and table.concat(delete_lines, "\n") or nil
+  local insert_content = #insert_lines > 0 and table.concat(insert_lines, "\n") or nil
+
+  return delete_content, insert_content
+end
+
 --- Parse completion text, detecting if it's INSERT or EDIT.
 ---@param text string The completion text
 ---@param ctx table The context
@@ -255,21 +285,22 @@ function M.parse_completion(text, ctx)
     return nil
   end
 
-  -- Check for edit markers
-  local delete_match = text:match("<<<DELETE\n(.-)>>>")
-  local insert_match = text:match("<<<INSERT\n(.-)>>>")
+  -- Check for edit markers using line-based parsing (more robust than regex)
+  if text:find("<<<DELETE") or text:find("<<<INSERT") then
+    local delete_match, insert_match = parse_edit_markers(text)
 
-  if delete_match or insert_match then
-    -- Clean up matches
-    delete_match = clean_completion_text(delete_match)
-    insert_match = clean_completion_text(insert_match)
+    if delete_match or insert_match then
+      -- Clean up matches
+      delete_match = clean_completion_text(delete_match)
+      insert_match = clean_completion_text(insert_match)
 
-    return {
-      type = "edit",
-      delete = delete_match,
-      insert = insert_match,
-      raw = text,
-    }
+      return {
+        type = "edit",
+        delete = delete_match,
+        insert = insert_match,
+        raw = text,
+      }
+    end
   end
 
   -- Pure insert: clean up the text

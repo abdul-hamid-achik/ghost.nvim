@@ -109,6 +109,10 @@ function M.disable()
   state.enabled = false
   M.cancel()
 
+  -- Clean up timers properly to prevent leaks
+  util.cleanup_timer(state.idle_timer)
+  state.idle_timer = nil
+
   if state.augroup then
     vim.api.nvim_clear_autocmds({ group = state.augroup })
   end
@@ -235,7 +239,11 @@ function M.in_comment_or_string()
     return false
   end
 
-  local node_type = node:type()
+  -- Wrap node:type() in pcall - node could become invalid if AST is corrupted
+  local type_ok, node_type = pcall(function() return node:type() end)
+  if not type_ok or not node_type then
+    return false
+  end
 
   -- Common comment/string node types across languages
   if
@@ -249,11 +257,13 @@ function M.in_comment_or_string()
   end
 
   -- Also check parent (cursor might be at the start of string)
-  local parent = node:parent()
-  if parent then
-    local parent_type = parent:type()
-    if parent_type:match("comment") or parent_type:match("string") then
-      return true
+  local parent_ok, parent = pcall(function() return node:parent() end)
+  if parent_ok and parent then
+    local parent_type_ok, parent_type = pcall(function() return parent:type() end)
+    if parent_type_ok and parent_type then
+      if parent_type:match("comment") or parent_type:match("string") then
+        return true
+      end
     end
   end
 
@@ -267,6 +277,12 @@ function M.request_completion()
   end
 
   util.log("Triggering completion request", vim.log.levels.DEBUG)
+
+  -- Cancel previous request before starting new one to prevent orphaned curl processes
+  if state.cancel_fn then
+    state.cancel_fn()
+    state.cancel_fn = nil
+  end
 
   local completion = require("haiku.completion")
   state.cancel_fn = completion.request()

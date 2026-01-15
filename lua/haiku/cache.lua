@@ -17,11 +17,13 @@ function M.make_key(ctx)
   -- This creates a reasonably unique key for the cursor position
   local prefix_tail = ctx.before_cursor:sub(-300)
   local suffix_head = ctx.after_cursor:sub(1, 100)
-  local key_str = ctx.filetype .. ":" .. prefix_tail .. "|" .. suffix_head
 
-  -- Simple hash to keep keys manageable
-  -- Using Lua's string as key (Neovim will handle it fine)
-  return key_str
+  -- Use a null byte as delimiter to prevent collision between different combinations
+  -- e.g., "a|b" + "c" vs "a" + "b|c" would previously both produce "a|b|c"
+  local key_str = ctx.filetype .. "\0" .. prefix_tail .. "\0" .. suffix_head
+
+  -- Hash the key to keep it manageable and prevent any edge case collisions
+  return vim.fn.sha256(key_str)
 end
 
 --- Get a value from the cache.
@@ -115,29 +117,14 @@ function M.stats()
 end
 
 --- Invalidate cache entries for a specific buffer.
---- Note: This is a simple implementation that clears entries matching the filepath.
----@param filepath string The file path to invalidate
+--- Note: Since cache keys are now hashed, this function clears the entire cache.
+--- For more granular invalidation, we would need to store filepath metadata with entries.
+---@param filepath string The file path to invalidate (currently unused, clears all)
 function M.invalidate_file(filepath)
-  local to_remove = {}
-
-  -- Find keys containing this filepath (simplified matching)
-  for key, _ in pairs(cache) do
-    -- This is a rough heuristic - could be improved
-    if key:find(filepath, 1, true) then
-      table.insert(to_remove, key)
-    end
-  end
-
-  -- Remove matching entries
-  for _, key in ipairs(to_remove) do
-    cache[key] = nil
-    for i, k in ipairs(order) do
-      if k == key then
-        table.remove(order, i)
-        break
-      end
-    end
-  end
+  -- With hashed keys, we can't match by filepath substring anymore.
+  -- Clear the entire cache as a safe fallback.
+  -- This is acceptable since cache is primarily for very recent completions.
+  M.clear()
 end
 
 --- Set the maximum cache size.

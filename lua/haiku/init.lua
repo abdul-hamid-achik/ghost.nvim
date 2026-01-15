@@ -119,6 +119,51 @@ M.defaults = {
 -- Active configuration (populated by setup)
 M.config = {}
 
+--- Validate configuration values after merge.
+---@param config table The configuration to validate
+---@return boolean valid, string|nil error_message
+local function validate_config(config)
+  -- Validate api_key type
+  if config.api_key and type(config.api_key) ~= "string" then
+    return false, "api_key must be a string"
+  end
+
+  -- Validate numeric fields
+  local numeric_fields = {
+    { "debounce_ms", config.debounce_ms },
+    { "min_chars", config.min_chars },
+    { "idle_trigger_ms", config.idle_trigger_ms },
+    { "max_tokens", config.max_tokens },
+  }
+
+  for _, field in ipairs(numeric_fields) do
+    if field[2] and type(field[2]) ~= "number" then
+      return false, field[1] .. " must be a number"
+    end
+  end
+
+  -- Validate nested tables exist
+  local required_tables = { "trigger", "context", "display", "keymap", "limits" }
+  for _, tbl_name in ipairs(required_tables) do
+    if not config[tbl_name] or type(config[tbl_name]) ~= "table" then
+      return false, tbl_name .. " configuration section is missing or invalid"
+    end
+  end
+
+  -- Validate limits are positive
+  if config.limits then
+    local limit_fields = { "max_buffer_lines", "edit_search_radius", "max_lsp_symbols", "max_diagnostics" }
+    for _, field in ipairs(limit_fields) do
+      local val = config.limits[field]
+      if val and (type(val) ~= "number" or val < 0) then
+        return false, "limits." .. field .. " must be a positive number"
+      end
+    end
+  end
+
+  return true, nil
+end
+
 --- Setup the plugin with user configuration.
 ---@param opts? table User configuration options
 function M.setup(opts)
@@ -126,6 +171,13 @@ function M.setup(opts)
 
   -- Merge user config with defaults
   M.config = util.tbl_deep_extend(M.defaults, opts or {})
+
+  -- Validate merged configuration
+  local valid, err = validate_config(M.config)
+  if not valid then
+    vim.notify("[haiku.nvim] Configuration error: " .. err, vim.log.levels.ERROR)
+    return
+  end
 
   -- Resolve API key from environment if not provided
   -- Priority: config > HAIKU_API_KEY > ANTHROPIC_API_KEY

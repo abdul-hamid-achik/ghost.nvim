@@ -78,10 +78,16 @@ end
 ---@param timer userdata|nil The timer to cleanup
 function M.cleanup_timer(timer)
   if timer then
-    timer:stop()
-    if not timer:is_closing() then
-      timer:close()
-    end
+    -- Wrap in pcall for compatibility with older Neovim versions
+    -- and to handle edge cases where timer might be in an invalid state
+    pcall(function()
+      timer:stop()
+    end)
+    pcall(function()
+      if not timer:is_closing() then
+        timer:close()
+      end
+    end)
   end
 end
 
